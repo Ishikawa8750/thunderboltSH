@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Quick CI check on every main push ─────────────────────────────────────
+  check:
+    name: Cargo Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Frontend build
+        run: npm run build
+
+      - name: Cargo check
+        working-directory: src-tauri
+        run: cargo check
+
+  # ── Full Tauri build + Release (only on version tags) ─────────────────────
+  build:
+    name: Build & Release (${{ matrix.platform }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: check
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+            args: ''
+          - platform: macos-latest
+            rust-target: aarch64-apple-darwin
+            args: '--target aarch64-apple-darwin'
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install Node deps
+        run: npm ci
+
+      # Windows: ensure WebView2 bootstrapper can be downloaded on the runner
+      # macOS: no extra steps needed beyond Rust toolchain
+
+      - name: Build and publish Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional: set these secrets in the repo to enable code signing
+          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'OpenBolt ${{ github.ref_name }}'
+          releaseBody: |
+            ## OpenBolt ${{ github.ref_name }}
+
+            ### 安装说明
+            - **Windows**: 下载 `.msi` 或 `.exe` 安装包，以管理员身份运行（需要 UAC 提升来配置网卡 IP）
+            - **macOS**: 下载 `.dmg`，打开后将 OpenBolt 拖入 Applications
+
+            ### 分发测试注意事项
+            - 两台电脑通过 Thunderbolt 线直连
+            - Windows 需要管理员权限（用于配置链接本地 IP）
+            - 首次运行点击 **开始发现** 等待对端出现
+            - 文件同步默认端口 7733（确保防火墙放行）
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
