@@ -35,30 +35,70 @@ async fn set_windows_static_ip(adapter_name: &str, ip: &str) -> OpenBoltResult<(
     let adapter_name = adapter_name.to_string();
     let ip = ip.to_string();
 
-    let output = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("netsh")
+    let result = tokio::task::spawn_blocking(move || {
+        let alias = format!("name=\"{}\"", adapter_name.replace('"', ""));
+
+        // Prefer the newer ipv4 syntax first.
+        let first = std::process::Command::new("netsh")
             .args([
                 "interface",
-                "ip",
+                "ipv4",
                 "set",
                 "address",
-                &format!("name={adapter_name}"),
-                "static",
-                &ip,
-                "255.255.255.0"
+                &alias,
+                "source=static",
+                &format!("address={ip}"),
+                "mask=255.255.255.0",
+                "gateway=none"
             ])
-            .output()
+            .output();
+
+        if let Ok(output) = first {
+            if output.status.success() {
+                return Ok::<(), OpenBoltError>(());
+            }
+
+            // Fallback for older netsh variants.
+            let second = std::process::Command::new("netsh")
+                .args([
+                    "interface",
+                    "ip",
+                    "set",
+                    "address",
+                    &alias,
+                    "static",
+                    &ip,
+                    "255.255.255.0"
+                ])
+                .output();
+
+            if let Ok(legacy) = second {
+                if legacy.status.success() {
+                    return Ok(());
+                }
+
+                let stderr = String::from_utf8_lossy(&legacy.stderr);
+                let stdout = String::from_utf8_lossy(&legacy.stdout);
+                return Err(OpenBoltError::CommandFailed(format!(
+                    "failed to set static ip via netsh (legacy syntax). adapter={adapter_name}, ip={ip}, stderr={stderr}, stdout={stdout}. Ensure OpenBolt is running as Administrator"
+                )));
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return Err(OpenBoltError::CommandFailed(format!(
+                "failed to set static ip via netsh. adapter={adapter_name}, ip={ip}, stderr={stderr}, stdout={stdout}. Ensure OpenBolt is running as Administrator"
+            )));
+        }
+
+        Err(OpenBoltError::CommandFailed(
+            "failed to launch netsh command".to_string()
+        ))
     })
     .await
-    .map_err(|e| OpenBoltError::CommandFailed(e.to_string()))??;
+    .map_err(|e| OpenBoltError::CommandFailed(e.to_string()))?;
 
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(OpenBoltError::CommandFailed(
-            String::from_utf8_lossy(&output.stderr).to_string()
-        ))
-    }
+    result
 }
 
 #[cfg(target_os = "macos")]
