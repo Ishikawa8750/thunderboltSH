@@ -1,6 +1,6 @@
 [package]
 name = "openbolt"
-version = "0.1.0"
+version = "0.1.1"
 description = "OpenBolt cross-platform Thunderbolt collaboration"
 authors = ["OpenBolt Contributors"]
 license = "MIT"
@@ -12,7 +12,6 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-winres = "0.1"
 
 [dependencies]
 anyhow = "1"
