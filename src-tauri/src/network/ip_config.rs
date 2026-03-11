@@ -58,6 +58,7 @@ async fn set_windows_static_ip(nic: &nic::ThunderboltNic, ip: &str) -> OpenBoltR
         );
         if let Ok(out) = std::process::Command::new("cmd").args(["/c", &cmd1]).output() {
             if out.status.success() {
+                open_windows_firewall(&safe_name);
                 return Ok::<(), OpenBoltError>(());
             }
             last_err = format!(
@@ -73,6 +74,7 @@ async fn set_windows_static_ip(nic: &nic::ThunderboltNic, ip: &str) -> OpenBoltR
         );
         if let Ok(out) = std::process::Command::new("cmd").args(["/c", &cmd2]).output() {
             if out.status.success() {
+                open_windows_firewall(&safe_name);
                 return Ok(());
             }
             last_err = format!(
@@ -97,6 +99,7 @@ async fn set_windows_static_ip(nic: &nic::ThunderboltNic, ip: &str) -> OpenBoltR
                 .output()
             {
                 if out.status.success() {
+                    open_windows_firewall(&safe_name);
                     return Ok(());
                 }
                 last_err = format!(
@@ -117,6 +120,25 @@ async fn set_windows_static_ip(nic: &nic::ThunderboltNic, ip: &str) -> OpenBoltR
     result
 }
 
+/// Add Windows Firewall rules to allow all inbound traffic on the OpenBolt
+/// subnet (10.99.99.0/24).  Rules are idempotent — deleted then re-created.
+#[cfg(target_os = "windows")]
+fn open_windows_firewall(_adapter: &str) {
+    let rules: &[(&str, &str)] = &[
+        (
+            "OpenBolt - Allow Inbound (10.99.99.0/24)",
+            "netsh advfirewall firewall delete rule name=\"OpenBolt - Allow Inbound (10.99.99.0/24)\" >nul 2>&1 & netsh advfirewall firewall add rule name=\"OpenBolt - Allow Inbound (10.99.99.0/24)\" dir=in action=allow remoteip=10.99.99.0/24 enable=yes"
+        ),
+        (
+            "OpenBolt - Allow ICMPv4",
+            "netsh advfirewall firewall delete rule name=\"OpenBolt - Allow ICMPv4\" >nul 2>&1 & netsh advfirewall firewall add rule name=\"OpenBolt - Allow ICMPv4\" dir=in action=allow protocol=icmpv4 remoteip=10.99.99.0/24 enable=yes"
+        ),
+    ];
+    for (_name, cmd) in rules {
+        let _ = std::process::Command::new("cmd").args(["/c", cmd]).output();
+    }
+}
+
 #[cfg(target_os = "macos")]
 async fn set_macos_static_ip(interface_name: &str, ip: &str) -> OpenBoltResult<()> {
     let interface_name = interface_name.to_string();
@@ -133,8 +155,10 @@ async fn set_macos_static_ip(interface_name: &str, ip: &str) -> OpenBoltResult<(
     if output.status.success() {
         Ok(())
     } else {
-        Err(OpenBoltError::CommandFailed(
-            String::from_utf8_lossy(&output.stderr).to_string()
-        ))
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        Err(OpenBoltError::CommandFailed(format!(
+            "networksetup -setmanual failed. interface={interface_name}, ip={ip}, stderr={stderr}, stdout={stdout}"
+        )))
     }
 }
