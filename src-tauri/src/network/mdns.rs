@@ -41,6 +41,7 @@ pub async fn start_discovery(
     let daemon = ServiceDaemon::new().map_err(|e| OpenBoltError::Mdns(e.to_string()))?;
 
     let host_name = hostname();
+    let mdns_host = format!("{}.local.", host_name);
     let props = [
         ("os", std::env::consts::OS),
         ("hostname", host_name.as_str()),
@@ -55,7 +56,7 @@ pub async fn start_discovery(
     let service = ServiceInfo::new(
         "_openbolt._tcp.local.",
         "openbolt-node",
-        &host_name,
+        &mdns_host,
         IpAddr::V4(ip),
         7733,
         &props[..]
