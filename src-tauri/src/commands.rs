@@ -75,6 +75,8 @@ pub async fn stop_discovery(state: tauri::State<'_, SharedAppState>) -> Result<(
     if let Some(runtime) = discovery_guard.take() {
         runtime.shutdown().await;
     }
+    // Clear discovered peers so stale entries don't linger.
+    state.0.discovered.write().await.clear();
     Ok(())
 }
 

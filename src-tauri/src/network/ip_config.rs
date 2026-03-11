@@ -1,4 +1,5 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use crate::error::{OpenBoltError, OpenBoltResult};
 
@@ -21,13 +22,15 @@ pub async fn ensure_local_link_ip() -> OpenBoltResult<String> {
     Ok(target_ip)
 }
 
+/// Deterministic octet derived from machine hostname so the same device
+/// always claims the same IP across restarts.
 fn pick_host_octet() -> u8 {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(128);
-
-    2 + (nanos % 252) as u8
+    let name = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "openbolt".to_string());
+    let mut hasher = DefaultHasher::new();
+    name.hash(&mut hasher);
+    2 + (hasher.finish() % 252) as u8
 }
 
 #[cfg(target_os = "windows")]

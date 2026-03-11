@@ -38,6 +38,9 @@ pub async fn start_discovery(
     peers: Arc<RwLock<Vec<DiscoveredPeer>>>,
     app_handle: Option<AppHandle>
 ) -> OpenBoltResult<DiscoveryRuntime> {
+    // Clear stale peers from any previous session.
+    peers.write().await.clear();
+
     let daemon = ServiceDaemon::new().map_err(|e| OpenBoltError::Mdns(e.to_string()))?;
 
     let host_name = hostname();
@@ -82,7 +85,7 @@ pub async fn start_discovery(
                         .map(|v| v.to_string())
                         .unwrap_or_default();
 
-                    if !ip.starts_with("10.99.99.") {
+                    if !ip.starts_with("10.99.99.") || ip == local_ip {
                         continue;
                     }
 
