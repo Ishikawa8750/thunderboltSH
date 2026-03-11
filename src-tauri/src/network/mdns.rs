@@ -45,6 +45,7 @@ pub async fn start_discovery(
 
     let host_name = hostname();
     let mdns_host = format!("{}.local.", host_name);
+    let instance_name = format!("openbolt-{}", host_name);
     let props = [
         ("os", std::env::consts::OS),
         ("hostname", host_name.as_str()),
@@ -58,7 +59,7 @@ pub async fn start_discovery(
 
     let service = ServiceInfo::new(
         "_openbolt._tcp.local.",
-        "openbolt-node",
+        &instance_name,
         &mdns_host,
         IpAddr::V4(ip),
         7733,
@@ -145,5 +146,14 @@ pub async fn start_discovery(
 fn hostname() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
+        .or_else(|_| {
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or(std::env::VarError::NotPresent)
+        })
         .unwrap_or_else(|_| "openbolt-device".to_string())
 }

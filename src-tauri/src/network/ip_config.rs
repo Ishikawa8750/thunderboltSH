@@ -27,6 +27,15 @@ pub async fn ensure_local_link_ip() -> OpenBoltResult<String> {
 fn pick_host_octet() -> u8 {
     let name = std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
+        .or_else(|_| {
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or(std::env::VarError::NotPresent)
+        })
         .unwrap_or_else(|_| "openbolt".to_string());
     let mut hasher = DefaultHasher::new();
     name.hash(&mut hasher);
