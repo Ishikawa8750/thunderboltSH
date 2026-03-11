@@ -10,7 +10,8 @@ use windows::Win32::NetworkManagement::IpHelper::{
 #[serde(rename_all = "camelCase")]
 pub struct ThunderboltNic {
     pub name: String,
-    pub friendly_name: String
+    pub friendly_name: String,
+    pub interface_index: Option<u32>
 }
 
 pub async fn detect_thunderbolt_nic() -> Option<ThunderboltNic> {
@@ -61,7 +62,8 @@ async fn detect_windows() -> Option<ThunderboltNic> {
             {
                 Some(ThunderboltNic {
                     name: name.clone(),
-                    friendly_name: name
+                    friendly_name: name,
+                    interface_index: None
                 })
             } else {
                 None
@@ -119,7 +121,8 @@ async fn detect_windows_native() -> Option<ThunderboltNic> {
                     };
                     return Some(ThunderboltNic {
                         name,
-                        friendly_name: friendly
+                        friendly_name: friendly,
+                        interface_index: Some(unsafe { adapter.Anonymous1.Anonymous.IfIndex })
                     });
                 }
             }
@@ -160,7 +163,8 @@ async fn detect_macos() -> Option<ThunderboltNic> {
                 if port.contains("Thunderbolt Bridge") && dev == "bridge0" {
                     return Some(ThunderboltNic {
                         name: dev,
-                        friendly_name: port
+                        friendly_name: port,
+                        interface_index: None
                     });
                 }
             }
