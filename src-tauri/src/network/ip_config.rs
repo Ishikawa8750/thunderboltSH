@@ -37,101 +37,67 @@ async fn set_windows_static_ip(nic: &nic::ThunderboltNic, ip: &str) -> OpenBoltR
     let ip = ip.to_string();
 
     let result = tokio::task::spawn_blocking(move || {
+        let safe_name = adapter_name.replace('"', "");
+        let mut last_err = String::new();
+
+        // Strategy 1: netsh via cmd /c — lets the Windows shell handle quoting correctly.
+        let cmd1 = format!(
+            r#"netsh interface ipv4 set address "{safe_name}" static {ip} 255.255.255.0 none"#
+        );
+        if let Ok(out) = std::process::Command::new("cmd").args(["/c", &cmd1]).output() {
+            if out.status.success() {
+                return Ok::<(), OpenBoltError>(());
+            }
+            last_err = format!(
+                "[netsh ipv4] stderr={}, stdout={}",
+                String::from_utf8_lossy(&out.stderr).trim(),
+                String::from_utf8_lossy(&out.stdout).trim()
+            );
+        }
+
+        // Strategy 2: legacy netsh syntax via cmd /c.
+        let cmd2 = format!(
+            r#"netsh interface ip set address "{safe_name}" static {ip} 255.255.255.0"#
+        );
+        if let Ok(out) = std::process::Command::new("cmd").args(["/c", &cmd2]).output() {
+            if out.status.success() {
+                return Ok(());
+            }
+            last_err = format!(
+                "[netsh ip] stderr={}, stdout={}",
+                String::from_utf8_lossy(&out.stderr).trim(),
+                String::from_utf8_lossy(&out.stdout).trim()
+            );
+        }
+
+        // Strategy 3: PowerShell New-NetIPAddress by InterfaceIndex.
         if let Some(index) = interface_index {
             let ps_script = format!(
                 concat!(
-                    "$index={index};",
-                    "$ip='{ip}';",
-                    "Set-NetIPInterface -InterfaceIndex $index -Dhcp Disabled -ErrorAction SilentlyContinue | Out-Null;",
-                    "Get-NetIPAddress -InterfaceIndex $index -AddressFamily IPv4 -ErrorAction SilentlyContinue | ",
-                    "Where-Object {{ $_.IPAddress -ne '127.0.0.1' }} | ",
-                    "Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue;",
-                    "New-NetIPAddress -InterfaceIndex $index -IPAddress $ip -PrefixLength 24 -AddressFamily IPv4 -Type Unicast -ErrorAction Stop | Out-Null"
+                    "Remove-NetIPAddress -InterfaceIndex {index} -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue;",
+                    "New-NetIPAddress -InterfaceIndex {index} -IPAddress '{ip}' -PrefixLength 24 -ErrorAction Stop | Out-Null"
                 ),
                 index = index,
                 ip = ip
             );
-
-            let powershell = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-Command", &ps_script])
-                .output();
-
-            if let Ok(output) = powershell {
-                if output.status.success() {
-                    return Ok::<(), OpenBoltError>(());
-                }
-
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-                if !stderr.is_empty() || !stdout.is_empty() {
-                    let detail = if !stderr.is_empty() { stderr } else { stdout };
-                    return Err(OpenBoltError::CommandFailed(format!(
-                        "failed to set static ip via PowerShell NetTCPIP. adapter={adapter_name}, interface_index={index}, ip={ip}, detail={detail}. Ensure OpenBolt is running as Administrator"
-                    )));
-                }
-            }
-        }
-
-        let alias = adapter_name.replace('"', "");
-
-        // Fallback to netsh on systems where NetTCPIP cmdlets are unavailable.
-        let first = std::process::Command::new("netsh")
-            .args([
-                "interface",
-                "ipv4",
-                "set",
-                "address",
-                &format!("name={alias}"),
-                "static",
-                &ip,
-                "255.255.255.0",
-                "none"
-            ])
-            .output();
-
-        if let Ok(output) = first {
-            if output.status.success() {
-                return Ok::<(), OpenBoltError>(());
-            }
-
-            // Fallback for older netsh variants.
-            let second = std::process::Command::new("netsh")
-                .args([
-                    "interface",
-                    "ip",
-                    "set",
-                    "address",
-                    &format!("name={alias}"),
-                    "static",
-                    &ip,
-                    "255.255.255.0",
-                    "none"
-                ])
-                .output();
-
-            if let Ok(legacy) = second {
-                if legacy.status.success() {
+            if let Ok(out) = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps_script])
+                .output()
+            {
+                if out.status.success() {
                     return Ok(());
                 }
-
-                let stderr = String::from_utf8_lossy(&legacy.stderr);
-                let stdout = String::from_utf8_lossy(&legacy.stdout);
-                return Err(OpenBoltError::CommandFailed(format!(
-                    "failed to set static ip via netsh (legacy syntax). adapter={adapter_name}, ip={ip}, stderr={stderr}, stdout={stdout}. Ensure OpenBolt is running as Administrator"
-                )));
+                last_err = format!(
+                    "[PowerShell] stderr={}, stdout={}",
+                    String::from_utf8_lossy(&out.stderr).trim(),
+                    String::from_utf8_lossy(&out.stdout).trim()
+                );
             }
-
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            return Err(OpenBoltError::CommandFailed(format!(
-                "failed to set static ip via netsh. adapter={adapter_name}, ip={ip}, stderr={stderr}, stdout={stdout}. Ensure OpenBolt is running as Administrator"
-            )));
         }
 
-        Err(OpenBoltError::CommandFailed(
-            "failed to launch netsh command".to_string()
-        ))
+        Err(OpenBoltError::CommandFailed(format!(
+            "all strategies failed to set static ip. adapter={safe_name}, ip={ip}, last_error={last_err}. Ensure OpenBolt is running as Administrator"
+        )))
     })
     .await
     .map_err(|e| OpenBoltError::CommandFailed(e.to_string()))?;
