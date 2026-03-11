@@ -39,18 +39,29 @@ async fn detect_windows() -> Option<ThunderboltNic> {
             .args([
                 "-NoProfile",
                 "-Command",
-                "Get-NetAdapter | Select-Object -ExpandProperty Name"
+                r#"Get-NetAdapter | ForEach-Object { "$($_.Name)|$($_.InterfaceDescription)" }"#
             ])
             .output()
             .ok()?;
 
         let text = String::from_utf8_lossy(&output.stdout);
         text.lines().find_map(|line| {
-            let lower = line.to_ascii_lowercase();
-            if lower.contains("thunderbolt") || lower.contains("intel") || line.contains("雷电") {
+            let parts: Vec<&str> = line.splitn(2, '|').collect();
+            let name = parts.first().map(|s| s.trim()).unwrap_or("").to_string();
+            let desc = parts.get(1).map(|s| s.trim()).unwrap_or("").to_string();
+            let name_lower = name.to_ascii_lowercase();
+            let desc_lower = desc.to_ascii_lowercase();
+            if name_lower.contains("thunderbolt")
+                || desc_lower.contains("thunderbolt")
+                || desc_lower.contains("usb4")
+                || name_lower.contains("usb4")
+                || desc_lower.contains("p2p network")
+                || name.contains("雷电")
+                || desc.contains("雷电")
+            {
                 Some(ThunderboltNic {
-                    name: line.trim().to_string(),
-                    friendly_name: line.trim().to_string()
+                    name: name.clone(),
+                    friendly_name: name
                 })
             } else {
                 None
@@ -97,6 +108,9 @@ async fn detect_windows_native() -> Option<ThunderboltNic> {
                     || description_lower.contains("intel(r) thunderbolt")
                     || friendly.contains("雷电")
                     || description.contains("雷电")
+                    || description_lower.contains("usb4")
+                    || friendly_lower.contains("usb4")
+                    || description_lower.contains("p2p network")
                 {
                     let name = if !friendly.is_empty() {
                         friendly.clone()
